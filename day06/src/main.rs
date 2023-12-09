@@ -52,6 +52,12 @@ impl Race {
     // can propably improve this with some sort of binary search
     // 0 <= counter <= duration + 1
     // but it is fast enough anyways, so there is no need to do that
+    // idea for binary search: define f(button_time) = 1 if exceeds record, else 0
+    // then over [0, duration+1] the function has three segments: left = 0, middle = 1, right = 0
+    // find two transititons with binsearch (keep in mind edge cases):
+    // 1. f(i) = 0, f(i+1) = 1
+    // 2. f(j) = 1, f(j+1) = 0
+    // then return ((i+1)..=j).len() = j - i - 1 + 1 = j - i
     fn exceeding_button_times(&self) -> i64 {
         let mut counter = 0;
         for button_time in 0..=(self.duration+1) {
