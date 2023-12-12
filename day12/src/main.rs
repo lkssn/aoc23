@@ -1,15 +1,15 @@
 use std::iter::zip;
 
 fn main() {
-    let input = std::fs::read_to_string("day12/data/input.txt").expect("failed to read file");
+    let input = std::fs::read_to_string("day12/data/example.txt").expect("failed to read file");
     let mut document = Document::parse(&input);
 
     let sum = document.arrangements_sum();
     println!("sum: {sum}");
 
     document.unfold();
-    // let sum_unfolded = document.arrangements_sum();
-    // println!("sum_unfolded: {sum_unfolded}");
+    let sum_unfolded = document.arrangements_sum();
+    println!("sum_unfolded: {sum_unfolded}");
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -91,8 +91,12 @@ impl Record {
         let unknowns = self.springs.iter().enumerate().filter(|(_, spring)| **spring == Spring::Unknown).map(|(i, _)| i).collect::<Vec::<usize>>();
         let u = unknowns.len();
 
+        // Runtime is exponential with Omega(2^u): This is not feasible!
+        // -> Have to solve the combinatorial problem on paper first.
+
         // encode the u picks with u bits
         // 1 = damaged, 0 = operational
+        println!("arrangements bits: {u}");
         for damaged_pick in 0..(1 << u) {
             for i in 0..u {
                 let damaged = ((damaged_pick >> i) & 1) == 1;
@@ -108,11 +112,17 @@ impl Record {
     }
 
     fn unfold(&mut self) {
-        let new_spring_length = 5 * self.springs.len();
-        let new_groups_length = 5 * self.groups.len();
+        let mut new_springs = self.springs.clone();
+        let mut new_groups = self.groups.clone();
 
-        self.springs = self.springs.iter().cloned().cycle().take(new_spring_length).collect();
-        self.groups = self.groups.iter().cloned().cycle().take(new_groups_length).collect();
+        for _ in 0..4 {
+            new_springs.push(Spring::Unknown);
+            new_springs.append(&mut self.springs.clone());
+            new_groups.append(&mut self.groups.clone())
+        }
+
+        self.springs = new_springs;
+        self.groups = new_groups;
     }
 }
 
