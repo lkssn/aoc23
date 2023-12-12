@@ -1,8 +1,15 @@
-fn main() {
-    let input = std::fs::read_to_string("day12/data/example.txt").expect("failed to read file");
-    let document = Document::parse(&input);
+use std::iter::zip;
 
-    println!("document: {document:#?}")
+fn main() {
+    let input = std::fs::read_to_string("day12/data/input.txt").expect("failed to read file");
+    let mut document = Document::parse(&input);
+
+    let sum = document.arrangements_sum();
+    println!("sum: {sum}");
+
+    document.unfold();
+    // let sum_unfolded = document.arrangements_sum();
+    // println!("sum_unfolded: {sum_unfolded}");
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -47,6 +54,66 @@ impl Record {
 
         Record{springs, groups}
     }
+
+    fn check_known(&self) -> bool {
+        let mut group_counter = 0;
+        let mut actual_groups = vec![];
+
+        for spring in &self.springs {
+            match spring {
+                Spring::Damaged => {
+                    group_counter += 1;
+                },
+                Spring::Operational => {
+                    if group_counter > 0 {
+                        actual_groups.push(group_counter);
+                        group_counter = 0;
+                    }
+                },
+                Spring::Unknown => panic!("check_known: found unknown spiral")
+            }
+        }
+
+        if group_counter > 0 {
+            actual_groups.push(group_counter);
+        }
+
+        if actual_groups.len() != self.groups.len() {
+            return false;
+        }
+
+        zip(actual_groups.iter(), self.groups.iter()).all(|(x,y)| x == y)
+    }
+
+    fn arrangements(&self) -> i64 {
+        let mut counter = 0;
+        let mut known_record = Record{springs: self.springs.clone(), groups: self.groups.clone()};
+        let unknowns = self.springs.iter().enumerate().filter(|(_, spring)| **spring == Spring::Unknown).map(|(i, _)| i).collect::<Vec::<usize>>();
+        let u = unknowns.len();
+
+        // encode the u picks with u bits
+        // 1 = damaged, 0 = operational
+        for damaged_pick in 0..(1 << u) {
+            for i in 0..u {
+                let damaged = ((damaged_pick >> i) & 1) == 1;
+                known_record.springs[unknowns[i]] = if damaged {Spring::Damaged} else {Spring::Operational};
+            }
+
+            if known_record.check_known() {
+                counter += 1;
+            }
+        }
+
+        counter
+    }
+
+    fn unfold(&mut self) {
+        let new_spring_length = 5 * self.springs.len();
+        let new_groups_length = 5 * self.groups.len();
+
+        self.springs = self.springs.iter().cloned().cycle().take(new_spring_length).collect();
+        self.groups = self.groups.iter().cloned().cycle().take(new_groups_length).collect();
+    }
 }
 
 #[derive(Debug)]
@@ -64,5 +131,15 @@ impl Document {
         }
 
         Document{records}
+    }
+
+    fn arrangements_sum(&self) -> i64 {
+        self.records.iter().map(Record::arrangements).sum()
+    }
+
+    fn unfold(&mut self) {
+        for record in self.records.iter_mut() {
+            record.unfold();
+        }
     }
 }
