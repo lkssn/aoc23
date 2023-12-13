@@ -1,7 +1,5 @@
-use std::iter::zip;
-
 fn main() {
-    let input = std::fs::read_to_string("day12/data/example.txt").expect("failed to read file");
+    let input = std::fs::read_to_string("day12/data/input.txt").expect("failed to read file");
     let mut document = Document::parse(&input);
 
     let sum = document.arrangements_sum();
@@ -12,7 +10,7 @@ fn main() {
     println!("sum_unfolded: {sum_unfolded}");
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Eq, PartialOrd, Ord)]
 enum Spring {
     Operational,
     Damaged,
@@ -30,7 +28,7 @@ impl Spring {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Record {
     springs: Vec<Spring>,
     groups: Vec<i64>
@@ -38,8 +36,8 @@ struct Record {
 
 impl Record {
     fn parse(s: &str) -> Record {
-        let mut springs = vec![];
-        let mut groups = vec![];
+        let mut springs = Vec::new();
+        let mut groups = Vec::new();
         let mut parts = s.split_whitespace();
 
         for spring_char in parts.next().unwrap().chars() {
@@ -55,56 +53,86 @@ impl Record {
         Record{springs, groups}
     }
 
-    fn check_known(&self) -> bool {
-        let mut group_counter = 0;
-        let mut actual_groups = vec![];
-
-        for spring in &self.springs {
-            match spring {
-                Spring::Damaged => {
-                    group_counter += 1;
-                },
-                Spring::Operational => {
-                    if group_counter > 0 {
-                        actual_groups.push(group_counter);
-                        group_counter = 0;
-                    }
-                },
-                Spring::Unknown => panic!("check_known: found unknown spiral")
-            }
-        }
-
-        if group_counter > 0 {
-            actual_groups.push(group_counter);
-        }
-
-        if actual_groups.len() != self.groups.len() {
-            return false;
-        }
-
-        zip(actual_groups.iter(), self.groups.iter()).all(|(x,y)| x == y)
-    }
-
     fn arrangements(&self) -> i64 {
         let mut counter = 0;
-        let mut known_record = Record{springs: self.springs.clone(), groups: self.groups.clone()};
-        let unknowns = self.springs.iter().enumerate().filter(|(_, spring)| **spring == Spring::Unknown).map(|(i, _)| i).collect::<Vec::<usize>>();
-        let u = unknowns.len();
+        let mut sequences = vec![(self.springs.clone(), 1)];
 
-        // Runtime is exponential with Omega(2^u): This is not feasible!
-        // -> Have to solve the combinatorial problem on paper first.
+        for g in self.groups.iter().take(self.groups.len() - 1) {
+            let g = *g;
 
-        // encode the u picks with u bits
-        // 1 = damaged, 0 = operational
-        println!("arrangements bits: {u}");
-        for damaged_pick in 0..(1 << u) {
-            for i in 0..u {
-                let damaged = ((damaged_pick >> i) & 1) == 1;
-                known_record.springs[unknowns[i]] = if damaged {Spring::Damaged} else {Spring::Operational};
+            let mut new_sequences = vec![];
+            for sequence in &sequences {
+                // Check: sequence == (O x z1, D x g, O, R)
+                let mut damaged: i64 = 0;
+                while damaged < (sequence.0.len() as i64) && sequence.0[damaged as usize] != Spring::Damaged {
+                    damaged += 1;
+                }
+
+                let end = damaged.min(sequence.0.len() as i64 - 1 - g);
+                let search_space = 0..=end;
+                for start in search_space {
+                    // check if g matches at start: {start, ..., start + g} = {D, ... , D, O}
+                    let mut is_group_match = true;
+                    for spring in &sequence.0[(start as usize)..((start + g) as usize)] {
+                        is_group_match = is_group_match && [Spring::Damaged, Spring::Unknown].contains(spring);
+                    }
+                    is_group_match = is_group_match && [Spring::Operational, Spring::Unknown].contains(&sequence.0[(start+g) as usize]);
+
+                    if is_group_match {
+                        let new_sequence = (Vec::from(&sequence.0[((start+g+1) as usize)..]), sequence.1);
+                        new_sequences.push(new_sequence);
+                    }
+                }
+            }
+            sequences.clear();
+            sequences.append(&mut new_sequences);
+
+            // most important part:
+            // deduplicate the sequences set, so it does not grow expontentially
+            // also take care to remember the amount of "points" each sequence carries
+            sequences.sort();
+
+            for i in 0..sequences.len() {
+                let mut sum = sequences[i].1;
+                for j in (i+1)..sequences.len() {
+                    if sequences[i].0.eq(&sequences[j].0) {
+                        sum += sequences[j].1;
+                    } else {
+                        break;
+                    }
+                }
+                sequences[i].1 = sum;
             }
 
-            if known_record.check_known() {
-                counter += 1;
+            sequences.dedup_by(|a, b| a.0.eq(&b.0));
+        }
+
+        // check the last group
+        let g = *self.groups.last().unwrap();
+
+        for sequence in sequences {
+            // Check: sequence == (O x z1, D x g, O x z2)
+            let mut damaged: i64 = 0;
+            while damaged < (sequence.0.len() as i64) && sequence.0[damaged as usize] != Spring::Damaged {
+                damaged += 1;
+            }
+
+            let end = damaged.min(sequence.0.len() as i64 - g);
+            let search_space = 0..=end;
+            for start in search_space {
+                // check if g matches at start: {start, ..., start + g} = {D, ... , D} and O after that
+                let mut is_group_match = true;
+                for spring in &sequence.0[(start as usize)..((start + g) as usize)] {
+                    is_group_match = is_group_match && [Spring::Damaged, Spring::Unknown].contains(spring);
+                }
+
+                for spring in &sequence.0[((start + g) as usize)..] {
+                    is_group_match = is_group_match && [Spring::Operational, Spring::Unknown].contains(spring);
+                }
+
+                if is_group_match {
+                    counter += sequence.1;
+                }
             }
         }
 
@@ -148,7 +176,7 @@ impl Document {
     }
 
     fn unfold(&mut self) {
-        for record in self.records.iter_mut() {
+        for record in &mut self.records {
             record.unfold();
         }
     }
