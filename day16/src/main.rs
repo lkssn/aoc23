@@ -97,11 +97,6 @@ struct Map {
 }
 
 impl Map {
-    fn get(&self, x: i32, y: i32) -> &Tile {
-        let index = y * self.w + x;
-        &self.tiles[index as usize]
-    }
-
     fn get_mut(&mut self, x: i32, y: i32) -> &mut Tile {
         let index = y * self.w + x;
         &mut self.tiles[index as usize]

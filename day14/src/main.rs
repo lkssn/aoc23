@@ -164,22 +164,3 @@ enum Rock {
 struct Platform {
     rocks: Vec<Vec<Rock>>
 }
-
-impl Platform {
-    fn print(&self) {
-        let w = self.rocks[0].len();
-        let h = self.rocks.len();
-
-        for y in 0..h {
-            for x in 0..w {
-                let c = match self.rocks[y][x] {
-                    Rock::Round => 'O',
-                    Rock::Cube  => '#',
-                    Rock::Empty => '.'
-                };
-                print!("{}", c);
-            }
-            println!();
-        }
-    }
-}
