@@ -1,7 +1,3 @@
-use std::fmt;
-
-
-
 fn main() {
     let input = std::fs::read_to_string("day17/data/example.txt").expect("failed to read file");
     let mut map = Map::parse(&input);
@@ -9,8 +5,8 @@ fn main() {
     let t = Point::new(map.w-1, map.h-1);
     let distance = map.find_optimal_heat_loss(s, t);
 
+    map.print_tree();
     println!("distance: {}", distance);
-    map.print();
 }
 
 struct Tile {
@@ -115,21 +111,58 @@ impl Map {
         map
     }
 
-    fn print(&self) {
+    fn print_tree(&self) {
         for y in 0..self.h {
             for x in 0..self.w {
                 let p = Point::new(x, y);
                 let tile = self.get(p);
 
                 if let Some(parent) = tile.parent {
-                    let direction = parent.get_direction(&p);
+                    let direction = p.get_direction(&parent);
                     direction.print();
                 } else {
-                    print!("{}", tile.heat_loss);
+                    if p == Point::new(0, 0) {
+                        print!("R");
+                    } else {
+                        panic!("unreachable point");
+                    }
                 }
             }
             println!();
         }
+    }
+
+    // Calculate the number of consecutive points in the path p -> ... -> root
+    // into a given direction until the first turn or end of path.
+    fn calc_consecutive_points(&self, p: Point, dir: Direction) -> i64 {
+        let mut counter = 1;
+
+        let delta = match dir {
+            Direction::North => Point::new( 0, -1),
+            Direction::East  => Point::new( 1,  0),
+            Direction::South => Point::new( 0,  1),
+            Direction::West  => Point::new(-1,  0),
+        };
+
+        let mut current = p;
+        loop {
+            if let Some(parent) = self.get(current).parent {
+                let difference = Point::new(parent.x - current.x, parent.y - current.y);
+
+                if difference == delta {
+                    counter += 1;
+                    current = parent;
+                } else {
+                    // end of line
+                    break;
+                }
+            } else {
+                // end of path -> also end of line
+                break;
+            }
+        }
+
+        counter
     }
 
     fn print_path(&self, path: &Path) {
@@ -138,15 +171,15 @@ impl Map {
                 let p = Point::new(x, y);
                 let tile = self.get(p);
 
-                if path.points.contains(&p) {
-                    if let Some(parent) = tile.parent {
-                        let direction = parent.get_direction(&p);
+                if let Some(parent) = tile.parent {
+                    if path.points.contains(&p) {
+                        let direction = p.get_direction(&parent);
                         direction.print();
                     } else {
-                        println!("p has no parent: {:?}", p);
+                        print!("{}", '.');
                     }
                 } else {
-                    print!("{}", tile.heat_loss);
+                    print!("{}", '.');
                 }
             }
             println!();
@@ -193,20 +226,33 @@ impl Map {
         // 2. Boundary: Candidate nodes for further exploration of the unknown. -> Boundary = {s}
         // 3. Unknown: We have not seen these nodes yet. -> Unknown = V
 
-        // TODO: implement consecutive counter
-        loop {
-            println!("{:?}", boundary);
+        // TODO: Reduce amount of feasible paths according to the max-3-consecutive-rule.
+        // This means maximally 4 nodes in a line.
+        // Idea 1: Check before considering any path -> If property violated: Drop this path.
+        //         -> Does not work: Sometimes have to backtrack further!
+        // Idea 2: Use normal Dijkstra and afterwards modify the shortest path iteratively to make it feasible.
+
+        while !boundary.is_empty() {
             // extend shortest path tree with one new node
             let next = self.remove_minimal_point(&mut boundary);
-            if next == t {
-                break;
-            }
 
             // update the boundary
             let neighbourhood = next.neighbourhood();
             let next_d = self.get(next).distance;
             for neighbour in neighbourhood {
+                // check rectangle-bounds for potential neighbours
                 if !(0..self.w).contains(&neighbour.x) || !(0..self.h).contains(&neighbour.y) {
+                    continue;
+                }
+
+                // check if the new path is a viable path
+                let dir = neighbour.get_direction(&next);
+                let counter = 1 + self.calc_consecutive_points(next, dir);
+                if counter >= 5 {
+                    // 4 nodes in a line are OK (3 edges)
+                    // 5 and more nodes: violation of the path property
+                    // not a viable path: drop the path
+                    println!("dropping not viable path: {:?} -> {:?}", next, neighbour);
                     continue;
                 }
 
@@ -223,20 +269,6 @@ impl Map {
                 }
             }
         }
-
-        let mut path = Path { points: vec![] };
-        let mut iter = t;
-        loop {
-            path.points.push(iter);
-            if let Some(parent) = self.get(iter).parent {
-                iter = parent;
-            } else {
-                break;
-            }
-        }
-        path.points.reverse();
-        println!("path: {:?}", path);
-        self.print_path(&path);
 
         self.get(t).distance
     }
