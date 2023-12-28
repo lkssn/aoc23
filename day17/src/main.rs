@@ -229,8 +229,10 @@ impl Map {
         // TODO: Reduce amount of feasible paths according to the max-3-consecutive-rule.
         // This means maximally 4 nodes in a line.
         // Idea 1: Check before considering any path -> If property violated: Drop this path.
-        //         -> Does not work: Sometimes have to backtrack further!
+        //         -> Problem: Subpaths of optimal feasible paths do not have to be optimal (but they are feasible).
+        //         -> Requires sometimes further backtracking.
         // Idea 2: Use normal Dijkstra and afterwards modify the shortest path iteratively to make it feasible.
+        // Idea 3: Use local backtracking during Dijkstra: When path is not feasible, check the last couple parents. (3? 4? 5?)
 
         while !boundary.is_empty() {
             // extend shortest path tree with one new node
