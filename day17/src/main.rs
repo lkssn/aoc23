@@ -1,5 +1,5 @@
 fn main() {
-    let input = std::fs::read_to_string("day17/data/example.txt").expect("failed to read file");
+    let input = std::fs::read_to_string("day17/data/small.txt").expect("failed to read file");
     let mut map = Map::parse(&input);
     let s = Point::new(0, 0);
     let t = Point::new(map.w-1, map.h-1);
@@ -22,17 +22,13 @@ impl Tile {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Point {
     x: i64,
     y: i64,
 }
 
-#[derive(Debug)]
-struct Path {
-    points: Vec<Point>
-}
-
+#[derive(PartialEq)]
 enum Direction {
     North,
     East,
@@ -59,10 +55,10 @@ impl Point {
 
     fn neighbourhood(&self) -> Vec<Point> {
         vec![
-            Point { x: self.x-1, y: self.y   },
-            Point { x: self.x+1, y: self.y   },
             Point { x: self.x,   y: self.y-1 },
+            Point { x: self.x+1, y: self.y   },
             Point { x: self.x,   y: self.y+1 },
+            Point { x: self.x-1, y: self.y   },
         ]
     }
 
@@ -122,64 +118,10 @@ impl Map {
                     direction.print();
                 } else {
                     if p == Point::new(0, 0) {
-                        print!("R");
+                        print!("s");
                     } else {
                         panic!("unreachable point");
                     }
-                }
-            }
-            println!();
-        }
-    }
-
-    // Calculate the number of consecutive points in the path p -> ... -> root
-    // into a given direction until the first turn or end of path.
-    fn calc_consecutive_points(&self, p: Point, dir: Direction) -> i64 {
-        let mut counter = 1;
-
-        let delta = match dir {
-            Direction::North => Point::new( 0, -1),
-            Direction::East  => Point::new( 1,  0),
-            Direction::South => Point::new( 0,  1),
-            Direction::West  => Point::new(-1,  0),
-        };
-
-        let mut current = p;
-        loop {
-            if let Some(parent) = self.get(current).parent {
-                let difference = Point::new(parent.x - current.x, parent.y - current.y);
-
-                if difference == delta {
-                    counter += 1;
-                    current = parent;
-                } else {
-                    // end of line
-                    break;
-                }
-            } else {
-                // end of path -> also end of line
-                break;
-            }
-        }
-
-        counter
-    }
-
-    fn print_path(&self, path: &Path) {
-        for y in 0..self.h {
-            for x in 0..self.w {
-                let p = Point::new(x, y);
-                let tile = self.get(p);
-
-                if let Some(parent) = tile.parent {
-                    if path.points.contains(&p) {
-                        let direction = p.get_direction(&parent);
-                        direction.print();
-                    } else {
-                        print!("{}", '.');
-                    }
-                } else {
-                    print!("{}", '.');
                 }
             }
             println!();
@@ -198,7 +140,7 @@ impl Map {
 
     fn remove_minimal_point(&self, v: &mut Vec<Point>) -> Point {
         if v.is_empty() {
-            panic!("find_minimal_distance: empty");
+            panic!("remove_minimal_point: empty");
         }
 
         let mut min_index = 0;
@@ -221,48 +163,35 @@ impl Map {
         self.get_mut(s).marked = true;
         boundary.push(s);
 
-        // Do a 3-Partition of the set of nodes:
+        // Solve the single source shortest path problem with Dijkstra's Algorithm.
+        // Do a 3-Partition of the set of nodes and iterate:
         // 1. Known: We know the shortest path to these nodes. -> Known = {}
         // 2. Boundary: Candidate nodes for further exploration of the unknown. -> Boundary = {s}
         // 3. Unknown: We have not seen these nodes yet. -> Unknown = V
 
-        // TODO: Reduce amount of feasible paths according to the max-3-consecutive-rule.
-        // This means maximally 4 nodes in a line.
-        // Idea 1: Check before considering any path -> If property violated: Drop this path.
-        //         -> Problem: Subpaths of optimal feasible paths do not have to be optimal (but they are feasible).
-        //         -> Requires sometimes further backtracking.
-        // Idea 2: Use normal Dijkstra and afterwards modify the shortest path iteratively to make it feasible.
-        // Idea 3: Use local backtracking during Dijkstra: When path is not feasible, check the last couple parents. (3? 4? 5?)
+        // TODO: Extend Dijkstra's Algorithm with the feasible path constraint.
+        // Feasible Path Constraint:
+        // You can move at most three blocks in a single direction
+        // before you have to turn left or right.
 
         while !boundary.is_empty() {
             // extend shortest path tree with one new node
             let next = self.remove_minimal_point(&mut boundary);
+            let next_d = self.get(next).distance;
 
             // update the boundary
-            let neighbourhood = next.neighbourhood();
-            let next_d = self.get(next).distance;
-            for neighbour in neighbourhood {
+            for neighbour in next.neighbourhood() {
                 // check rectangle-bounds for potential neighbours
                 if !(0..self.w).contains(&neighbour.x) || !(0..self.h).contains(&neighbour.y) {
                     continue;
                 }
 
-                // check if the new path is a viable path
-                let dir = neighbour.get_direction(&next);
-                let counter = 1 + self.calc_consecutive_points(next, dir);
-                if counter >= 5 {
-                    // 4 nodes in a line are OK (3 edges)
-                    // 5 and more nodes: violation of the path property
-                    // not a viable path: drop the path
-                    println!("dropping not viable path: {:?} -> {:?}", next, neighbour);
-                    continue;
-                }
-
                 let tile = self.get_mut(neighbour);
+                let new_distance = next_d + tile.heat_loss;
 
-                if next_d + tile.heat_loss < tile.distance {
+                if new_distance < tile.distance {
                     tile.parent = Some(next);
-                    tile.distance = next_d + tile.heat_loss;
+                    tile.distance = new_distance;
                 }
 
                 if !tile.marked {
