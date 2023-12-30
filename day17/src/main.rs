@@ -296,7 +296,7 @@ impl HeatMatrix {
     }
 
     // Check if the path is feasible:
-    // Delta of consecutive points can be the same max 4 times.
+    // Delta of consecutive points can be the same max 3 times.
     fn is_feasible_path(&self, path: &Vec<Point>) -> bool {
         let mut delta = path[0].delta(&path[1]);
         let mut counter = 1;
@@ -306,7 +306,7 @@ impl HeatMatrix {
 
             if delta == new_delta {
                 counter += 1;
-                if counter >= 5 {
+                if counter > 3 {
                     return false;
                 }
             } else {
@@ -340,11 +340,14 @@ impl HeatMatrix {
             // find the optimal feasible path among the generated paths and the current path
             let mut min_path = path.clone();
             let mut min_distance = self.path_distance(&path);
+            println!("find_optimal_feasible_path: distance = {}, path.len() = {:?}", min_distance, min_path.len());
 
             for aug in augmented_paths {
                 if !self.is_feasible_path(&aug) {
+                    println!("feasible: N");
                     continue;
                 }
+                println!("feasible: Y");
 
                 let distance = self.path_distance(&aug);
                 if distance < min_distance {
@@ -359,7 +362,6 @@ impl HeatMatrix {
             }
 
             path = min_path;
-            println!("find_optimal_feasible_path: distance = {}, path.len() = {:?}", min_distance, path.len());
         }
 
         path
