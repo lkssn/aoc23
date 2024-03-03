@@ -1,37 +1,34 @@
-use std::iter::zip;
-
 fn main() {
     let input = std::fs::read_to_string("day17/data/example.txt").expect("failed to read file");
     let heat_matrix = HeatMatrix::parse(&input);
-    let s = Point::new(0, 0);
-    let t: Point = Point::new(heat_matrix.w-1, heat_matrix.h-1);
 
-    let dijkstra_tree = heat_matrix.dijkstra(s, t);
-    let dijkstra_distance = dijkstra_tree.get(t).distance;
+    let path = heat_matrix.find_path().expect("unreachable");
+    let distance = heat_matrix.calc_path_weight(&path);
 
-    let optimal_feasible_path = heat_matrix.find_optimal_feasible_path();
-    let optimal_feasible_distance = heat_matrix.path_distance(&optimal_feasible_path);
-
-    dijkstra_tree.print();
-    println!("dijkstra_distance: {}", dijkstra_distance);
-
-    heat_matrix.print_path(optimal_feasible_path);
-    println!("optimal_feasible_distance: {}", optimal_feasible_distance);
+    heat_matrix.print_path(&path);
+    println!("distance: {distance}");
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DijkstraState {
+    Known,
+    Boundary,
+    Unknown
+}
+
+#[derive(Debug, Clone)]
 struct DijkstraData {
-    marked: bool,
+    state: DijkstraState,
     distance: i64,
-    parent: Option<Point>
+    prev_path: Option<Vec<Point>>
 }
 
 impl Default for DijkstraData {
     fn default() -> DijkstraData {
         DijkstraData {
-            marked: false,
+            state: DijkstraState::Unknown,
             distance: i64::MAX,
-            parent: None
+            prev_path: None
         }
     }
 }
@@ -42,66 +39,56 @@ struct Point {
     y: i64,
 }
 
-#[derive(PartialEq)]
-enum Direction {
-    North,
-    East,
-    South,
-    West,
-}
-
-impl Direction {
-    fn print(&self) {
-        let c = match self {
-            Self::North => '^',
-            Self::East =>  '>',
-            Self::South => 'v',
-            Self::West =>  '<',
-        };
-        print!("{}", c);
-    }
-}
-
 impl Point {
     fn new(x: i64, y: i64) -> Point {
         Point { x, y }
     }
 
-    fn neighbourhood(&self) -> Vec<Point> {
-        vec![
-            Point { x: self.x,   y: self.y-1 },
-            Point { x: self.x+1, y: self.y   },
-            Point { x: self.x,   y: self.y+1 },
-            Point { x: self.x-1, y: self.y   },
-        ]
-    }
+    // Generate all paths to every other point with the following condition:
+    // The path moves 1 to 3 times in a single direction and then turns right or left.
+    // 24 = 4 * 3 * 2 paths in total (including out of bounds paths).
+    fn chess_paths(&self) -> Vec<Vec<Point>> {
+        let mut paths = vec![];
 
-    fn delta(&self, next: &Self) -> Point {
-        Point::new(next.x - self.x, next.y - self.y) 
-    }
+        for delta in vec![
+            Point::new(0, -1), // North
+            Point::new(1, 0), // East
+            Point::new(0, 1), // South
+            Point::new(-1, 0), // West
+        ] {
+            for steps in 1..=3 {
+                for turn in vec![-1, 1] {
+                    let mut path = vec![];
+                    let mut iter = *self;
 
-    fn get_direction(&self, next: &Self) -> Direction {
-        let d = self.x.abs_diff(next.x) + self.y.abs_diff(next.y);
-        if d != 1 {
-            panic!("get_direction: not neighbours {:?}, {:?}", self, next);
+                    // Starting point: self
+                    path.push(iter);
+
+                    // One to Three points going in direction delta
+                    for _ in 0..steps {
+                        iter.x += delta.x;
+                        iter.y += delta.y;
+                        path.push(iter);
+                    }
+
+                    // Turn left or right at the end
+                    if delta.x == 0 {
+                        iter.x += turn;
+                    } else {
+                        iter.y += turn;
+                    }
+                    path.push(iter);
+
+                    paths.push(path);
+                }
+            }
         }
 
-        if self.y > next.y {
-            return Direction::North;
-        }
-
-        if self.y < next.y {
-            return Direction::South;
-        }
-
-        if self.x < next.x {
-            return Direction::East;
-        }
-
-        return Direction::West;
+        paths
     }
 }
 
+#[derive(PartialEq, Clone, Debug)]
 struct Matrix<T: Clone + Default> {
     w: i64,
     h: i64,
@@ -155,43 +142,52 @@ impl HeatMatrix {
         matrix
     }
 
-    fn print_path(&self, mut path: Vec<Point>) {
+    fn print_path(&self, path: &Vec<Point>) {
+        let mut path = path.clone();
         path.sort();
 
         for y in 0..self.h {
             for x in 0..self.w {
                 let p = Point::new(x, y);
 
-                if let Ok(index) = path.binary_search(&p) {
-                    let next_index = index + 1;
-                    if next_index < path.len() {
-                        let next = path[next_index];
-                        let dir = p.get_direction(&next);
-                        dir.print();
-                        continue;
-                    }
+                if path.binary_search(&p).is_ok() {
+                    print!("x");
+                } else {
+                    print!(".");
                 }
-
-                print!(".");
             }
             println!();
         }
     }
 
-    // Compute on the HeatMatrix graph G the partial shortest-path-tree
-    // with source s and target t using Dijkstra's algorithm.
-    fn dijkstra(&self, s: Point, t: Point) -> DijkstraMatrix {
-        self.dijkstra_mod(vec![], s, t)
+    // Path is in the bounds.
+    fn check_path_valid(&self, path: &Vec<Point>) -> bool {
+        path.iter().all(|p| {
+            if !(0..self.w).contains(&p.x) {
+                return false;
+            }
+
+            if !(0..self.h).contains(&p.y) {
+                return false;
+            }
+
+            true
+        })
     }
 
-    // Compute on the HeatMatrix graph G the partial shortest-path-tree
-    // with source s and target t using Dijkstra's algorithm
-    // but instead use the Graph G' = G - p + {s, t}.
-    fn dijkstra_mod(&self, p: Vec<Point>, s: Point, t: Point) -> DijkstraMatrix {
+    fn calc_path_weight(&self, path: &Vec<Point>) -> i64 {
+        // saturating add: treat i64::MAX as infinity
+        path.iter().skip(1).fold(0 as i64, |acc, x| acc.saturating_add(*self.get(*x)))
+    }
+
+    // Compute on the HeatMatrix graph G the shortest-path-tree
+    // with source s using Dijkstra's algorithm where nodes are neighbouring,
+    // if a single chess move suffices.
+    fn dijkstra_chess(&self, s: Point) -> DijkstraMatrix {
         let mut tree = DijkstraMatrix::new_sized(self.w, self.h);
         let mut boundary = vec![];
         tree.get_mut(s).distance = 0;
-        tree.get_mut(s).marked = true;
+        tree.get_mut(s).state = DijkstraState::Known;
         boundary.push(s);
 
         // Solve the single source shortest path problem with Dijkstra's Algorithm.
@@ -202,37 +198,39 @@ impl HeatMatrix {
 
         while !boundary.is_empty() {
             // extend shortest path tree with one new node
-            let next = tree.remove_minimal_point(&mut boundary);
-            if next == t {
-                // just compute the partial tree until we find t
-                break;
-            }
-            let next_d = tree.get(next).distance;
+            let current = tree.remove_minimal_point(&mut boundary);
+            tree.get_mut(current).state = DijkstraState::Known;
 
             // update the boundary
-            for neighbour in next.neighbourhood() {
-                // check rectangle-bounds for potential neighbours
-                if !(0..self.w).contains(&neighbour.x) || !(0..self.h).contains(&neighbour.y) {
+            'path_next: for chess_path in current.chess_paths() {
+                // check out of bounds
+                if !self.check_path_valid(&chess_path) {
                     continue;
                 }
 
-                // skip p but not {s,t}
-                if neighbour != s && neighbour != t {
-                    if p.contains(&neighbour) {
-                        continue;
+                // check no loops
+                if let Some(prev_path) = &tree.get(current).prev_path {
+                    for p in prev_path.iter() {
+                        for q in chess_path.iter().skip(1) {
+                            if *p == *q {
+                                continue 'path_next;
+                            }
+                        }
                     }
                 }
 
-                let data = tree.get_mut(neighbour);
-                let new_distance = next_d + self.get(neighbour);
+                let neighbour = *chess_path.last().expect("chess path is empty");
+                let old_distance = tree.get(neighbour).distance;
+                let new_distance = tree.get(current).distance.saturating_add(self.calc_path_weight(&chess_path));
 
-                if new_distance < data.distance {
-                    data.parent = Some(next);
-                    data.distance = new_distance;
+                if new_distance < old_distance {
+                    let neighbour_data = tree.get_mut(neighbour);
+                    neighbour_data.prev_path = Some(chess_path);
+                    neighbour_data.distance = new_distance;
                 }
 
-                if !data.marked {
-                    data.marked = true;
+                if tree.get(neighbour).state == DijkstraState::Unknown {
+                    tree.get_mut(neighbour).state = DijkstraState::Boundary;
                     boundary.push(neighbour);
                 }
             }
@@ -241,130 +239,81 @@ impl HeatMatrix {
         tree
     }
 
-    // Find any feasible path from the upper-left corner to the lower-right corner.
-    fn find_any_feasible_path(&self) -> Vec<Point> {
-        let s = Point::new(0, 0);
-        let t = Point::new(self.w-1, self.h-1);
-        let mut path = vec![];
-        let mut vertical = true;
-        let mut current = s;
+    // Compute the shortest path tree.
+    fn find_tree(&self, s: Point, t: Point) -> DijkstraMatrix {
+        let base_tree = self.dijkstra_chess(s);
+        let mut final_tree = base_tree.clone();
 
-        // zig zag along the diagonal
-        // turns at every node -> path is feasible
-        // diagonal path always works -> is a path from s to t
-        while current != t {
-            path.push(current);
-            if vertical {
-                current.y += 1;
-            } else {
-                current.x += 1;
-            }
-            vertical = !vertical;
-        }
-        path.push(t);
+        // TODO: this does not work correctly right now!
+        // Somehow the modification generates infeasible paths.
 
-        path
-    }
+        // Modification to base tree:
+        // Last move to t does not necessarily have to end in a turn.
 
-    // Find a set of paths that could be an improvement.
-    fn find_augmented_paths(&self, path: &Vec<Point>) -> Vec<Vec<Point>> {
-        let l = path.len();
-        let mut augmentations = vec![];
+        for vertical in [true, false] {
+            for steps in 1..=3 {
+                let delta = if vertical {Point::new(0, -1)} else {Point::new(-1, 0)};
+                let mut path = vec![];
+                let mut iter = t;
 
-        let mut candidate_nodes = path.clone();
-        candidate_nodes.remove(0); // remove s
-        candidate_nodes.pop(); // remove t
-
-        // candidate_nodes = p - {s,t}
-        for index in 1..=(l-2) {
-            let s = path[index-1];
-            let t = path[index+1];
-            let tree = self.dijkstra_mod(path.clone(), s, t);
-            let epsilon = tree.find_path(s, t);
-
-            // check if t is reachable from s
-            if let Some(mut epsilon) = epsilon {
-                let mut aug = vec![];
-                aug.append(&mut Vec::from(&path[..(index-1)]));
-                aug.append(&mut epsilon);
-                aug.append(&mut Vec::from(&path[(index+2)..]));
-                augmentations.push(aug);
-            }
-        }
-
-        augmentations
-    }
-
-    // Check if the path is feasible:
-    // Delta of consecutive points can be the same max 3 times.
-    fn is_feasible_path(&self, path: &Vec<Point>) -> bool {
-        let mut delta = path[0].delta(&path[1]);
-        let mut counter = 1;
-
-        for (current, next) in zip(path.iter().skip(1), path.iter().skip(2)) {
-            let new_delta = current.delta(&next);
-
-            if delta == new_delta {
-                counter += 1;
-                if counter > 3 {
-                    return false;
+                path.push(iter);
+                for _ in 0..steps {
+                    iter.x += delta.x;
+                    iter.y += delta.y;
+                    path.push(iter);
                 }
-            } else {
-                delta = new_delta;
-                counter = 1;
-            }
-        }
 
-        true
-    }
+                path.reverse();
 
-    // Calculate the path distance as the sum of heat losses on the edges(!).
-    // This always skips the heat loss on the first node.
-    fn path_distance(&self, path: &Vec<Point>) -> i64 {
-        path.iter().skip(1).fold(0 as i64, |acc, x| acc + self.get(*x))
-    }
-
-    // Find among all feasible paths from the upper-left corner to the lower-right corner
-    // the shortest path.
-    fn find_optimal_feasible_path(&self) -> Vec<Point> {
-        // Optimization Procedure:
-        // 1. Find any feasible path.
-        // 2. Iteratively improve the path.
-        // 3. Loop until no improvement found.
-        let mut path = self.find_any_feasible_path();
-
-        loop {
-            // generate a set of possible improved paths
-            let augmented_paths = self.find_augmented_paths(&path);
-
-            // find the optimal feasible path among the generated paths and the current path
-            let mut min_path = path.clone();
-            let mut min_distance = self.path_distance(&path);
-            println!("find_optimal_feasible_path: distance = {}, path.len() = {:?}", min_distance, min_path.len());
-
-            for aug in augmented_paths {
-                if !self.is_feasible_path(&aug) {
-                    println!("feasible: N");
+                // check out of bounds
+                if !self.check_path_valid(&path) {
                     continue;
                 }
-                println!("feasible: Y");
 
-                let distance = self.path_distance(&aug);
-                if distance < min_distance {
-                    min_path = aug.clone();
-                    min_distance = distance;
+                // check no loops
+                if let Some(prev_path) = &base_tree.get(iter).prev_path {
+                    if prev_path.contains(&path[1]) {
+                        continue;
+                    }
+                }
+
+                let old_distance  = final_tree.get(t).distance;
+                let new_distance = base_tree.get(iter).distance.saturating_add(self.calc_path_weight(&path));
+                let data = final_tree.get_mut(t);
+
+                if new_distance < old_distance {
+                    data.distance = new_distance;
+                    data.prev_path = Some(path);
                 }
             }
-
-            // check if we are done
-            if min_path == path {
-                break
-            }
-
-            path = min_path;
         }
 
-        path
+        final_tree
+    }
+
+    fn find_path(&self) -> Option<Vec<Point>> {
+        let s = Point{x: 0, y: 0};
+        let t = Point{x: self.w-1, y: self.h-1};
+        let tree = self.find_tree(s, t);
+
+        let mut path = vec![t];
+        let mut current = t;
+
+        while let Some(prev_path) = &tree.get(current).prev_path {
+            for p in prev_path.iter().rev().skip(1) {
+                path.push(*p);
+            }
+
+            current = prev_path[0];
+        }
+
+        if current != s {
+            return None;
+        }
+
+        path.reverse();
+
+        Some(path)
     }
 }
 
@@ -386,44 +335,5 @@ impl DijkstraMatrix {
         }
 
         v.remove(min_index)
-    }
-
-    fn print(&self) {
-        for y in 0..self.h {
-            for x in 0..self.w {
-                let p = Point::new(x, y);
-                let data = self.get(p);
-
-                if let Some(parent) = data.parent {
-                    let direction = p.get_direction(&parent);
-                    direction.print();
-                } else {
-                    print!(".");
-                }
-            }
-            println!();
-        }
-    }
-
-    fn find_path(&self, s: Point, t: Point) -> Option<Vec<Point>> {
-        let mut path = vec![];
-        let mut iter = t;
-
-        loop {
-            path.push(iter);
-
-            if let Some(parent) = self.get(iter).parent {
-                iter = parent;
-            } else {
-                break;
-            }
-        }
-
-        if iter != s {
-            return None;
-        }
-
-        path.reverse();
-        Some(path)
     }
 }
