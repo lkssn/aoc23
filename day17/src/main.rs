@@ -44,47 +44,16 @@ impl Point {
         Point { x, y }
     }
 
-    // Generate all paths to every other point with the following condition:
-    // The path moves 1 to 3 times in a single direction and then turns right or left.
-    // 24 = 4 * 3 * 2 paths in total (including out of bounds paths).
-    fn chess_paths(&self) -> Vec<Vec<Point>> {
-        let mut paths = vec![];
+    fn turn_clock_wise(&self) -> Point {
+        let p = self;
+        let q = Point::new(-p.y, p.x);
+        q
+    }
 
-        for delta in vec![
-            Point::new(0, -1), // North
-            Point::new(1, 0), // East
-            Point::new(0, 1), // South
-            Point::new(-1, 0), // West
-        ] {
-            for steps in 1..=3 {
-                for turn in vec![-1, 1] {
-                    let mut path = vec![];
-                    let mut iter = *self;
-
-                    // Starting point: self
-                    path.push(iter);
-
-                    // One to Three points going in direction delta
-                    for _ in 0..steps {
-                        iter.x += delta.x;
-                        iter.y += delta.y;
-                        path.push(iter);
-                    }
-
-                    // Turn left or right at the end
-                    if delta.x == 0 {
-                        iter.x += turn;
-                    } else {
-                        iter.y += turn;
-                    }
-                    path.push(iter);
-
-                    paths.push(path);
-                }
-            }
-        }
-
-        paths
+    fn reversed(&self) -> Point {
+        let p = self;
+        let q = Point::new(-p.x, -p.y);
+        q
     }
 }
 
@@ -162,17 +131,63 @@ impl HeatMatrix {
 
     // Path is in the bounds.
     fn check_path_valid(&self, path: &Vec<Point>) -> bool {
-        path.iter().all(|p| {
-            if !(0..self.w).contains(&p.x) {
-                return false;
+        path.iter().all(|p| self.check_point_valid(p))
+    }
+
+    // Point is in the bounds.
+    fn check_point_valid(&self, p: &Point) ->  bool {
+        (0..self.w).contains(&p.x) && (0..self.h).contains(&p.y)
+    }
+
+    // Generate all the next valid straight paths:
+    // 1. Do not go into the direction of prev_path or the reverse direction of it.
+    // 2. For every valid direction go 1,2 or 3 steps into that direction.
+    fn generate_next_paths(&self, p: Point, prev_path: &Option<Vec<Point>>) -> Vec<Vec<Point>> {
+        let mut paths = vec![];
+        if let Some(prev_path) = prev_path {
+            let prev = prev_path[1];
+            let mut d = p;
+            d.x -= prev.x;
+            d.y -= prev.y;
+
+            for ortho in [d.turn_clock_wise(), d.turn_clock_wise().reversed()] {
+                paths.append(&mut self.generate_short_paths(p, ortho));
+            }
+        } else {
+            for d in [
+                Point::new(1, 0),
+                Point::new(-1, 0),
+                Point::new(0, 1),
+                Point::new(0, -1)
+            ] {
+                paths.append(&mut self.generate_short_paths(p, d));
+            }
+        }
+
+        paths
+    }
+
+    // Generate all valid paths from p in the direction
+    // of the normalized vector d (east/west/north/south),
+    // with 1 to 3 steps.
+    fn generate_short_paths(&self, p: Point, d: Point) -> Vec<Vec<Point>> {
+        let mut paths: Vec<Vec<Point>> = vec![];
+        let mut path = vec![p];
+        let mut q: Point = p;
+
+        for _ in 0..3 {
+            q.x += d.x;
+            q.y += d.y;
+
+            if !self.check_point_valid(&q) {
+                break;
             }
 
-            if !(0..self.h).contains(&p.y) {
-                return false;
-            }
+            path.push(q);
+            paths.push(path.clone());
+        }
 
-            true
-        })
+        paths
     }
 
     fn calc_path_weight(&self, path: &Vec<Point>) -> i64 {
@@ -202,30 +217,17 @@ impl HeatMatrix {
             tree.get_mut(current).state = DijkstraState::Known;
 
             // update the boundary
-            'path_next: for chess_path in current.chess_paths() {
-                // check out of bounds
-                if !self.check_path_valid(&chess_path) {
-                    continue;
-                }
-
-                // check no loops
-                if let Some(prev_path) = &tree.get(current).prev_path {
-                    for p in prev_path.iter() {
-                        for q in chess_path.iter().skip(1) {
-                            if *p == *q {
-                                continue 'path_next;
-                            }
-                        }
-                    }
-                }
-
-                let neighbour = *chess_path.last().expect("chess path is empty");
+            for path in self.generate_next_paths(current, &tree.get(current).prev_path) {
+                let neighbour = *path.last().expect("chess path is empty");
                 let old_distance = tree.get(neighbour).distance;
-                let new_distance = tree.get(current).distance.saturating_add(self.calc_path_weight(&chess_path));
+                let new_distance = tree.get(current).distance.saturating_add(self.calc_path_weight(&path));
+
+                println!("path: {path:?}");
+                println!("relax: {current:?}->{neighbour:?}");
 
                 if new_distance < old_distance {
                     let neighbour_data = tree.get_mut(neighbour);
-                    let mut prev_path = chess_path;
+                    let mut prev_path = path;
                     // Always want to store the reverse paths!
                     prev_path.reverse();
                     neighbour_data.prev_path = Some(prev_path);
@@ -253,41 +255,41 @@ impl HeatMatrix {
         // Modification to base tree:
         // Last move to t does not necessarily have to end in a turn.
 
-        for vertical in [true, false] {
-            for steps in 1..=3 {
-                let delta = if vertical {Point::new(0, -1)} else {Point::new(-1, 0)};
-                let mut path = vec![];
-                let mut iter = t;
+        // for vertical in [true, false] {
+        //     for steps in 1..=3 {
+        //         let delta = if vertical {Point::new(0, -1)} else {Point::new(-1, 0)};
+        //         let mut path = vec![];
+        //         let mut iter = t;
 
-                path.push(iter);
-                for _ in 0..steps {
-                    iter.x += delta.x;
-                    iter.y += delta.y;
-                    path.push(iter);
-                }
+        //         path.push(iter);
+        //         for _ in 0..steps {
+        //             iter.x += delta.x;
+        //             iter.y += delta.y;
+        //             path.push(iter);
+        //         }
 
-                // check out of bounds
-                if !self.check_path_valid(&path) {
-                    continue;
-                }
+        //         // check out of bounds
+        //         if !self.check_path_valid(&path) {
+        //             continue;
+        //         }
 
-                // check no loops
-                if let Some(prev_path) = &base_tree.get(iter).prev_path {
-                    if prev_path.contains(&path[path.len()-2]) {
-                        continue;
-                    }
-                }
+        //         // check no loops
+        //         if let Some(prev_path) = &base_tree.get(iter).prev_path {
+        //             if prev_path.contains(&path[path.len()-2]) {
+        //                 continue;
+        //             }
+        //         }
 
-                let old_distance  = final_tree.get(t).distance;
-                let new_distance = base_tree.get(iter).distance.saturating_add(self.calc_path_weight(&path));
-                let data = final_tree.get_mut(t);
+        //         let old_distance  = final_tree.get(t).distance;
+        //         let new_distance = base_tree.get(iter).distance.saturating_add(self.calc_path_weight(&path));
+        //         let data = final_tree.get_mut(t);
 
-                if new_distance < old_distance {
-                    data.distance = new_distance;
-                    data.prev_path = Some(path);
-                }
-            }
-        }
+        //         if new_distance < old_distance {
+        //             data.distance = new_distance;
+        //             data.prev_path = Some(path);
+        //         }
+        //     }
+        // }
 
         final_tree
     }
