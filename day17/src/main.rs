@@ -187,14 +187,14 @@ impl HeatMatrix {
         let mut tree = DijkstraMatrix::new_sized(self.w, self.h);
         let mut boundary = vec![];
         tree.get_mut(s).distance = 0;
-        tree.get_mut(s).state = DijkstraState::Known;
+        tree.get_mut(s).state = DijkstraState::Boundary;
         boundary.push(s);
 
         // Solve the single source shortest path problem with Dijkstra's Algorithm.
         // Do a 3-Partition of the set of nodes and iterate:
         // 1. Known: We know the shortest path to these nodes. -> Known = {}
         // 2. Boundary: Candidate nodes for further exploration of the unknown. -> Boundary = {s}
-        // 3. Unknown: We have not seen these nodes yet. -> Unknown = V
+        // 3. Unknown: We have not seen these nodes yet. -> Unknown = V \ {s}
 
         while !boundary.is_empty() {
             // extend shortest path tree with one new node
@@ -225,7 +225,10 @@ impl HeatMatrix {
 
                 if new_distance < old_distance {
                     let neighbour_data = tree.get_mut(neighbour);
-                    neighbour_data.prev_path = Some(chess_path);
+                    let mut prev_path = chess_path;
+                    // Always want to store the reverse paths!
+                    prev_path.reverse();
+                    neighbour_data.prev_path = Some(prev_path);
                     neighbour_data.distance = new_distance;
                 }
 
@@ -263,8 +266,6 @@ impl HeatMatrix {
                     path.push(iter);
                 }
 
-                path.reverse();
-
                 // check out of bounds
                 if !self.check_path_valid(&path) {
                     continue;
@@ -272,7 +273,7 @@ impl HeatMatrix {
 
                 // check no loops
                 if let Some(prev_path) = &base_tree.get(iter).prev_path {
-                    if prev_path.contains(&path[1]) {
+                    if prev_path.contains(&path[path.len()-2]) {
                         continue;
                     }
                 }
@@ -300,11 +301,11 @@ impl HeatMatrix {
         let mut current = t;
 
         while let Some(prev_path) = &tree.get(current).prev_path {
-            for p in prev_path.iter().rev().skip(1) {
+            for p in prev_path.iter().skip(1) {
                 path.push(*p);
             }
 
-            current = prev_path[0];
+            current = *path.last().expect("path empty");
         }
 
         if current != s {
